@@ -1,5 +1,6 @@
 package com.vectorx;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.msgpack.jackson.dataformat.MessagePackFactory;
 
@@ -289,54 +290,363 @@ public class HybridIndex {
         byte[] jsonBytes = jsonMapper.writeValueAsBytes(meta);
         return Base64.getEncoder().encodeToString(jsonBytes);
     }
+//
+    public List<Map<String, Object>> search(List<Double> denseVector, Map<String, Object> sparseVector,
+                                            int sparseTopK, int denseTopK, boolean includeVectors,
+                                            Object filterQuery, int rrfK) throws Exception {
 
-    // Test method to validate the structure being sent
-//    public void testStructure(List<Map<String, Object>> inputArray) throws Exception {
-//        if (inputArray.isEmpty()) {
-//            System.out.println("Input array is empty");
-//            return;
-//        }
-//
-//        System.out.println("=== Testing Structure ===");
-//        Map<String, Object> item = inputArray.get(0);
-//
-//        String vectorId = String.valueOf(item.getOrDefault("id", ""));
-//        List<Double> denseVector = extractDenseVector(item.get("dense_vector"));
-//        NormalizationResult normResult = normalizeVector(denseVector);
-//
-//        Map<String, Object> sparseVector = (Map<String, Object>) item.getOrDefault("sparse_vector", new HashMap<>());
-//        List<Integer> indices = extractIntegerList(sparseVector.get("indices"));
-//        List<Double> values = extractDoubleList(sparseVector.get("values"));
-//
-//        Map<String, Object> meta = (Map<String, Object>) item.getOrDefault("meta", new HashMap<>());
-//        String metaB64 = encodeMetaToBase64(meta);
-//
-//        Map<String, Object> hybridVector = new LinkedHashMap<>();
-//        hybridVector.put("id", vectorId);
-//
-//        List<Float> denseVectorFloats = normResult.normalizedVector.stream()
-//                .map(Double::floatValue)
-//                .collect(Collectors.toList());
-//        hybridVector.put("dense_vector", denseVectorFloats);
-//
-//        hybridVector.put("indices", indices);
-//
-//        List<Float> valuesFloats = values.stream()
-//                .map(Double::floatValue)
-//                .collect(Collectors.toList());
-//        hybridVector.put("values", valuesFloats);
-//
-//        hybridVector.put("dense_norm", (float) normResult.norm);
-//        hybridVector.put("meta", metaB64);
-//
-//        // Print the structure
-//        String json = jsonMapper.writerWithDefaultPrettyPrinter()
-//                .writeValueAsString(Arrays.asList(hybridVector));
-//        System.out.println("Generated structure:");
-//        System.out.println(json);
-//        System.out.println("=== End Test ===");
-//    }
+        // Validation
+        if (sparseTopK > 256) {
+            throw new IllegalArgumentException("sparse_top_k cannot be greater than 256");
+        }
+        if (denseTopK > 256) {
+            throw new IllegalArgumentException("dense_top_k cannot be greater than 256");
+        }
 
+
+
+
+        // Normalize dense query vector (ignoring encryption)
+        NormalizationResult normalizedDense = normalizeVector(denseVector);
+
+        List<Integer> sparseIndices = (List<Integer>) sparseVector.getOrDefault("indices", new ArrayList<>());
+        List<Double> sparseValues = (List<Double>) sparseVector.getOrDefault("values", new ArrayList<>());
+
+        List<Map<String, Object>> sparseQuery = new ArrayList<>();
+        for (int i = 0; i < Math.min(sparseIndices.size(), sparseValues.size()); i++) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("index", sparseIndices.get(i));
+            item.put("value", sparseValues.get(i));
+            sparseQuery.add(item);
+        }
+
+        Map<String, Object> requestData = new HashMap<>();
+        requestData.put("dense_vector", normalizedDense.normalizedVector);
+        requestData.put("sparse_vector", sparseQuery);
+        requestData.put("sparse_top_k", sparseTopK);
+        requestData.put("dense_top_k", denseTopK);
+        requestData.put("include_vectors", includeVectors);
+
+        if (filterQuery != null) {
+            if (filterQuery instanceof String) {
+                requestData.put("filter", filterQuery);
+            } else {
+                requestData.put("filter", jsonMapper.writeValueAsString(filterQuery));
+            }
+        } else {
+            requestData.put("filter", "{}");
+        }
+
+        String jsonBody = jsonMapper.writeValueAsString(requestData);
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url + "/hybrid/" + name + "/search_separate"))
+                .header("Authorization", token)
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(30))
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                .build();
+
+        // Send request
+        HttpResponse<String> response = apiClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200 && response.statusCode() != 201) {
+            throw new RuntimeException("HTTP request failed with status: " + response.statusCode() +
+                    ", body: " + response.body());
+        }
+
+        // Parse response
+        JsonNode results = jsonMapper.readTree(response.body());
+
+        // Process results
+        Map<String, Object> processedResults = processSearchResults(results, includeVectors);
+
+        // Validate RRF input (simplified validation)
+        if (!validateRrfInput(processedResults)) {
+            throw new IllegalArgumentException("RRF validation failed");
+        }
+
+        // Apply RRF fusion
+        List<Map<String, Object>> fusedResults = reciprocalRankFusion(processedResults, rrfK);
+
+        // Clean up vector data if not requested
+        if (!includeVectors) {
+            for (Map<String, Object> result : fusedResults) {
+                result.remove("vector");
+            }
+        }
+
+        return fusedResults;
+    }
+
+    private List<Map<String,Object>> reciprocalRankFusion (Map<String, Object> data,int k) {
+        List<Map<String, Object>> denseResults = (List<Map<String, Object>>) data.getOrDefault("dense_results", new ArrayList<>());
+        List<Map<String, Object>> sparseResults = (List<Map<String, Object>>) data.getOrDefault("sparse_results", new ArrayList<>());
+        List<Map<String, Object>> metadata = (List<Map<String, Object>>) data.getOrDefault("metadata", new ArrayList<>());
+
+        // Create dictionaries for quick lookup
+        Map<String, Integer> denseRankMap = new HashMap<>();
+        Map<String, Integer> sparseRankMap = new HashMap<>();
+
+        for (Map<String, Object> doc : denseResults) {
+            denseRankMap.put((String) doc.get("id"), (Integer) doc.get("rank"));
+        }
+
+        for (Map<String, Object> doc : sparseResults) {
+            sparseRankMap.put((String) doc.get("id"), (Integer) doc.get("rank"));
+        }
+
+        // Create lookup maps for scores and vectors
+        Map<String, Map<String, Object>> denseDataMap = new HashMap<>();
+        Map<String, Map<String, Object>> sparseDataMap = new HashMap<>();
+
+        for (Map<String, Object> doc : denseResults) {
+            denseDataMap.put((String) doc.get("id"), doc);
+        }
+
+        for (Map<String, Object> doc : sparseResults) {
+            sparseDataMap.put((String) doc.get("id"), doc);
+        }
+
+        // Create metadata lookup
+        Map<String, Object> metadataMap = new HashMap<>();
+        for (Map<String, Object> meta : metadata) {
+            metadataMap.put((String) meta.get("id"), meta.getOrDefault("meta", ""));
+        }
+
+        // Get all unique document IDs
+        Set<String> allDocIds = new HashSet<>();
+        allDocIds.addAll(denseRankMap.keySet());
+        allDocIds.addAll(sparseRankMap.keySet());
+
+        // Calculate RRF scores for each document
+        List<Map<String, Object>> rrfResults = new ArrayList<>();
+
+        for (String docId : allDocIds) {
+            double rrfScore = 0.0;
+
+            // Get ranks (null if document doesn't appear in a ranking list)
+            Integer denseRank = denseRankMap.get(docId);
+            Integer sparseRank = sparseRankMap.get(docId);
+
+            // Calculate RRF contribution from dense ranking
+            if (denseRank != null) {
+                rrfScore += 1.0 / (k + denseRank);
+            }
+
+            // Calculate RRF contribution from sparse ranking
+            if (sparseRank != null) {
+                rrfScore += 1.0 / (k + sparseRank);
+            }
+
+            // Determine which vector to use (prefer dense if both present, otherwise use available)
+            Object vector = null;
+            if (denseDataMap.containsKey(docId) && sparseDataMap.containsKey(docId)) {
+                // Both present, use dense vector
+                vector = denseDataMap.get(docId).get("vector");
+            } else if (denseDataMap.containsKey(docId)) {
+                // Only dense present
+                vector = denseDataMap.get(docId).get("vector");
+            } else if (sparseDataMap.containsKey(docId)) {
+                // Only sparse present
+                vector = sparseDataMap.get(docId).get("vector");
+            }
+
+            // Create result object
+            Map<String, Object> result = new HashMap<>();
+            result.put("id", docId);
+            result.put("rrf_score", rrfScore);
+            result.put("sparse_rank", sparseRank != null ? sparseRank : 0);
+            result.put("dense_rank", denseRank != null ? denseRank : 0);
+            result.put("meta", metadataMap.getOrDefault(docId, ""));
+            result.put("vector", vector);
+
+            rrfResults.add(result);
+        }
+
+        // Sort by RRF score in descending order
+        rrfResults.sort((a, b) -> Double.compare((Double) b.get("rrf_score"), (Double) a.get("rrf_score")));
+
+        return rrfResults;
+    }
+
+    private boolean validateRrfInput(Map<String, Object> data) {
+        /**
+         * Validate the input data structure for RRF algorithm.
+         *
+         * @param data Input data to validate
+         * @return true if valid, false otherwise
+         */
+
+        if (data == null) {
+            System.err.println("Input data must not be null");
+            return false;
+        }
+
+        // Check required keys
+        String[] requiredKeys = {"dense_results", "sparse_results"};
+        for (String key : requiredKeys) {
+            if (!data.containsKey(key)) {
+                System.err.println("Missing required key: " + key);
+                return false;
+            }
+        }
+
+        // Validate dense_results structure
+        Object denseResultsObj = data.get("dense_results");
+        if (!(denseResultsObj instanceof List)) {
+            System.err.println("dense_results must be a list");
+            return false;
+        }
+
+        List<?> denseResults = (List<?>) denseResultsObj;
+        for (int i = 0; i < denseResults.size(); i++) {
+            Object doc = denseResults.get(i);
+            if (!(doc instanceof Map)) {
+                System.err.println("dense_results[" + i + "] must be a map");
+                return false;
+            }
+
+            Map<?, ?> docMap = (Map<?, ?>) doc;
+            // Required keys - vector is optional
+            String[] requiredDocKeys = {"id", "score", "rank"};
+            for (String key : requiredDocKeys) {
+                if (!docMap.containsKey(key)) {
+                    System.err.println("dense_results[" + i + "] missing required key: " + key);
+                    return false;
+                }
+            }
+        }
+
+        // Validate sparse_results structure
+        Object sparseResultsObj = data.get("sparse_results");
+        if (!(sparseResultsObj instanceof List)) {
+            System.err.println("sparse_results must be a list");
+            return false;
+        }
+
+        List<?> sparseResults = (List<?>) sparseResultsObj;
+        for (int i = 0; i < sparseResults.size(); i++) {
+            Object doc = sparseResults.get(i);
+            if (!(doc instanceof Map)) {
+                System.err.println("sparse_results[" + i + "] must be a map");
+                return false;
+            }
+
+            Map<?, ?> docMap = (Map<?, ?>) doc;
+            // Required keys - vector is optional
+            String[] requiredDocKeys = {"id", "score", "rank"};
+            for (String key : requiredDocKeys) {
+                if (!docMap.containsKey(key)) {
+                    System.err.println("sparse_results[" + i + "] missing required key: " + key);
+                    return false;
+                }
+            }
+        }
+
+        // Validate metadata if present
+        if (data.containsKey("metadata")) {
+            Object metadataObj = data.get("metadata");
+            if (!(metadataObj instanceof List)) {
+                System.err.println("metadata must be a list");
+                return false;
+            }
+
+            List<?> metadata = (List<?>) metadataObj;
+            for (int i = 0; i < metadata.size(); i++) {
+                Object meta = metadata.get(i);
+                if (!(meta instanceof Map)) {
+                    System.err.println("metadata[" + i + "] must be a map");
+                    return false;
+                }
+
+                Map<?, ?> metaMap = (Map<?, ?>) meta;
+                if (!metaMap.containsKey("id")) {
+                    System.err.println("metadata[" + i + "] missing required key: id");
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private Map<String, Object> processSearchResults(JsonNode results, boolean includeVectors) {
+        Map<String, Object> processed = new HashMap<>();
+
+        // Process dense results
+        JsonNode denseNode = results.get("dense_results");
+        List<Map<String, Object>> denseResults = new ArrayList<>();
+        if (denseNode != null && denseNode.isArray()) {
+            for (JsonNode result : denseNode) {
+                Map<String, Object> searchResult = new HashMap<>();
+                searchResult.put("id", result.get("id").asText());
+                searchResult.put("score", result.get("score").asDouble());
+                searchResult.put("rank", result.get("rank").asInt());
+                searchResult.put("vector", null);
+
+                // Handle vector if present (ignoring decryption)
+                if (includeVectors && result.has("vector") && !result.get("vector").isNull()) {
+                    searchResult.put("vector", jsonMapper.convertValue(result.get("vector"), List.class));
+                }
+
+                denseResults.add(searchResult);
+            }
+        }
+        processed.put("dense_results", denseResults);
+
+        // Process sparse results
+        JsonNode sparseNode = results.get("sparse_results");
+        List<Map<String, Object>> sparseResults = new ArrayList<>();
+        if (sparseNode != null && sparseNode.isArray()) {
+            for (JsonNode result : sparseNode) {
+                Map<String, Object> searchResult = new HashMap<>();
+                searchResult.put("id", result.get("id").asText());
+                searchResult.put("score", result.get("score").asDouble());
+                searchResult.put("rank", result.get("rank").asInt());
+                searchResult.put("vector", null);
+
+                // Handle vector if present (ignoring decryption)
+                if (includeVectors && result.has("vector") && !result.get("vector").isNull()) {
+                    searchResult.put("vector", jsonMapper.convertValue(result.get("vector"), List.class));
+                }
+
+                sparseResults.add(searchResult);
+            }
+        }
+        processed.put("sparse_results", sparseResults);
+
+        // Process metadata
+        JsonNode metadataNode = results.get("metadata");
+        List<Map<String, Object>> metadata = new ArrayList<>();
+        if (metadataNode != null && metadataNode.isArray()) {
+            for (JsonNode meta : metadataNode) {
+                Map<String, Object> metaResult = new HashMap<>();
+                metaResult.put("id", meta.get("id").asText());
+                metaResult.put("meta", new HashMap<>());
+
+                // Handle metadata (ignoring decryption - simplified)
+                if (meta.has("meta") && !meta.get("meta").isNull()) {
+                    try {
+                        String metaStr = meta.get("meta").asText();
+                        // In simplified version, assume it's already decoded JSON
+                        Map<String, Object> metaMap = jsonMapper.readValue(metaStr,
+                                jsonMapper.getTypeFactory().constructMapType(HashMap.class, String.class, Object.class));
+                        metaResult.put("meta", metaMap);
+                    } catch (Exception e) {
+                        System.out.println("Warning: Failed to process metadata for " + meta.get("id").asText() + ": " + e.getMessage());
+                        metaResult.put("meta", new HashMap<>());
+                    }
+                }
+
+                metadata.add(metaResult);
+            }
+        }
+        processed.put("metadata", metadata);
+
+        return processed;
+    }
+//
     public Map<String, Object> describe() {
         Map<String, Object> data = new HashMap<>();
         data.put("name", this.name);
