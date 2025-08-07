@@ -8,6 +8,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -646,7 +647,113 @@ public class HybridIndex {
 
         return processed;
     }
-//
+
+    public Map<String, Object> getVector(String vectorId) throws Exception {
+        /**
+         * Get a hybrid vector by ID
+         *
+         * @param vectorId The ID of the vector to retrieve
+         * @return Map containing the vector data
+         * @throws Exception if the request fails
+         */
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url + "/hybrid/" + name + "/vector/" + vectorId))
+                .header("Authorization", token)
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(30))
+                .GET()
+                .build();
+
+        HttpResponse<String> response = apiClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200 && response.statusCode() != 201) {
+            throw new RuntimeException("HTTP request failed with status: " + response.statusCode() +
+                    ", body: " + response.body());
+        }
+
+        Map<String, Object> result = jsonMapper.readValue(response.body(),
+                jsonMapper.getTypeFactory().constructMapType(HashMap.class, String.class, Object.class));
+
+        // Process the result (ignoring encryption as requested)
+
+        // Decode metadata for unencrypted mode
+        if (result.containsKey("meta") && result.get("meta") != null) {
+            try {
+                String metaStr = (String) result.get("meta");
+                // Assuming base64 decoded content is JSON - simplified approach
+                byte[] decodedMeta = Base64.getDecoder().decode(metaStr);
+                String decodedJson = new String(decodedMeta, StandardCharsets.UTF_8);
+
+                // Parse the JSON metadata
+                Map<String, Object> metaMap = jsonMapper.readValue(decodedJson,
+                        jsonMapper.getTypeFactory().constructMapType(HashMap.class, String.class, Object.class));
+                result.put("meta", metaMap);
+            } catch (Exception e) {
+                System.out.println("Warning: Failed to decode metadata: " + e.getMessage());
+                result.put("meta", new HashMap<>());
+            }
+        }
+
+        // Format sparse vector for consistency
+        if (result.containsKey("sparse_vector") && result.get("sparse_vector") != null) {
+            Object sparseVectorObj = result.get("sparse_vector");
+
+            if (sparseVectorObj instanceof List) {
+                List<?> sparseList = (List<?>) sparseVectorObj;
+
+                // Convert from [{"index": idx, "value": val}] to {"indices": [...], "values": [...]}
+                if (!sparseList.isEmpty() && sparseList.get(0) instanceof Map) {
+                    List<Integer> indices = new ArrayList<>();
+                    List<Double> values = new ArrayList<>();
+
+                    for (Object item : sparseList) {
+                        Map<?, ?> itemMap = (Map<?, ?>) item;
+                        if (itemMap.containsKey("index") && itemMap.containsKey("value")) {
+                            indices.add(((Number) itemMap.get("index")).intValue());
+                            values.add(((Number) itemMap.get("value")).doubleValue());
+                        }
+                    }
+
+                    Map<String, Object> formattedSparse = new HashMap<>();
+                    formattedSparse.put("indices", indices);
+                    formattedSparse.put("values", values);
+                    result.put("sparse_vector", formattedSparse);
+                }
+            }
+            // If it's already in the correct format (Map with indices/values), leave it as is
+        }
+
+        return result;
+    }
+
+    public String deleteVector(String vectorId) throws Exception {
+        /**
+         * Delete a hybrid vector by ID
+         *
+         * @param vectorId The ID of the vector to delete
+         * @return Success message
+         * @throws Exception if the request fails
+         */
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url + "/hybrid/" + name + "/vector/" + vectorId))
+                .header("Authorization", token)
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(30))
+                .DELETE()
+                .build();
+
+        HttpResponse<String> response = apiClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200 && response.statusCode() != 201) {
+            throw new RuntimeException("HTTP request failed with status: " + response.statusCode() +
+                    ", body: " + response.body());
+        }
+
+        return "Hybrid vector " + vectorId + " deleted successfully";
+    }
+
     public Map<String, Object> describe() {
         Map<String, Object> data = new HashMap<>();
         data.put("name", this.name);

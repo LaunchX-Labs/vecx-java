@@ -77,16 +77,7 @@ public class Main {
             Map<String, Object> filter = new HashMap<>();
 
 
-            System.out.println(hyidx.search(
-                    denseVector,
-                    sparseVector,
-                    sparseTopK,
-                    denseTopK,
-                    includeVectors,
-                    filter,
-                    rrfK
-
-            ));
+            System.out.println(hyidx.getVector("vector1"));
         } catch (Exception e) {
             e.printStackTrace();
         }
