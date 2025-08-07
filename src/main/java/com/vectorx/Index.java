@@ -98,7 +98,9 @@ public class Index {
 //        System.out.println("VectorBatch: \n"+vectorBatch);
 
         ObjectMapper mapper = new ObjectMapper();
-        byte[] serialized = mapper.writeValueAsBytes(vectorBatch);
+        String json = mapper.writeValueAsString(inputArray);
+//        System.out.println(json);
+        byte[] serialized = mapper.writeValueAsBytes(json);
 
         System.out.println(Arrays.toString(serialized));
 

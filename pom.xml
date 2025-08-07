@@ -15,13 +15,16 @@
     </properties>
 
     <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-surefire-plugin</artifactId>
-        <version>3.0.0-M9</version>
-        <configuration>
-            <argLine>--add-opens java.base/sun.misc=ALL-UNNAMED</argLine>
-        </configuration>
-    </plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-surefire-plugin</artifactId>
+    <version>3.0.0-M9</version>
+    <configuration>
+        <argLine>
+            --add-opens java.base/sun.misc=ALL-UNNAMED
+            --add-opens java.base/java.nio=ALL-UNNAMED
+        </argLine>
+    </configuration>
+</plugin>
 
     <dependencies>
         <dependency>
@@ -44,6 +47,8 @@
             <artifactId>jackson-dataformat-msgpack</artifactId>
             <version>0.9.10</version>
         </dependency>
+
+        <!-- MessagePack support -->
     </dependencies>
 
 </project>
