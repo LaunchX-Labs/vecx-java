@@ -1,0 +1,10 @@
+package com.vectorx;
+
+public class VectorXTest {
+    public static void main(String[] args) throws Exception {
+        String token = "pankaj:CgYO9pfG4UB1nqLieUMu39HP7HMGnB3w:india-west-1"; // Replace with actual token
+        VectorX vx = new VectorX(token);
+
+        System.out.println(vx.listIndexes());
+    }
+}

@@ -1,5 +1,6 @@
 package com.vectorx;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.msgpack.jackson.dataformat.MessagePackFactory;
@@ -63,14 +64,16 @@ public class HybridIndex {
         for (Map<String, Object> item : inputArray) {
             String vectorId = String.valueOf(item.getOrDefault("id", ""));
 
-            // Handle dense vector - could be List<Double>, List<Float>, double[], or float[]
+            // Handle dense vector - could be List<Double>, List<Float>, double[], or
+            // float[]
             List<Double> denseVector = extractDenseVector(item.get("dense_vector"));
 
             // Normalize dense vector and get norm
             NormalizationResult normResult = normalizeVector(denseVector);
 
             // Handle sparse vector
-            Map<String, Object> sparseVector = (Map<String, Object>) item.getOrDefault("sparse_vector", new HashMap<>());
+            Map<String, Object> sparseVector = (Map<String, Object>) item.getOrDefault("sparse_vector",
+                    new HashMap<>());
             List<Integer> indices = extractIntegerList(sparseVector.get("indices"));
             List<Double> values = extractDoubleList(sparseVector.get("values"));
 
@@ -291,10 +294,36 @@ public class HybridIndex {
         byte[] jsonBytes = jsonMapper.writeValueAsBytes(meta);
         return Base64.getEncoder().encodeToString(jsonBytes);
     }
-//
+
+    private Map<String, Object> decodeMetaFromBase64(String encodedMeta) {
+        if (encodedMeta == null || encodedMeta.trim().isEmpty()) {
+            return new HashMap<>();
+        }
+
+        try {
+            byte[] jsonBytes = Base64.getDecoder().decode(encodedMeta.trim());
+
+            if (jsonBytes.length == 0) {
+                return new HashMap<>();
+            }
+
+            String jsonString = new String(jsonBytes, StandardCharsets.UTF_8).trim();
+
+            if (jsonString.isEmpty() || jsonString.equals("null")) {
+                return new HashMap<>();
+            }
+
+            return jsonMapper.readValue(jsonString, new TypeReference<Map<String, Object>>() {
+            });
+        } catch (Exception e) {
+            System.out.println("Warning: Failed to decode/parse metadata: " + e.getMessage());
+            return new HashMap<>();
+        }
+    }
+
+    //
     public List<Map<String, Object>> search(List<Double> denseVector, Map<String, Object> sparseVector,
-                                            int sparseTopK, int denseTopK, boolean includeVectors,
-                                            Object filterQuery, int rrfK) throws Exception {
+            int sparseTopK, int denseTopK, boolean includeVectors, int rrfK) throws Exception {
 
         // Validation
         if (sparseTopK > 256) {
@@ -303,9 +332,6 @@ public class HybridIndex {
         if (denseTopK > 256) {
             throw new IllegalArgumentException("dense_top_k cannot be greater than 256");
         }
-
-
-
 
         // Normalize dense query vector (ignoring encryption)
         NormalizationResult normalizedDense = normalizeVector(denseVector);
@@ -328,15 +354,6 @@ public class HybridIndex {
         requestData.put("dense_top_k", denseTopK);
         requestData.put("include_vectors", includeVectors);
 
-        if (filterQuery != null) {
-            if (filterQuery instanceof String) {
-                requestData.put("filter", filterQuery);
-            } else {
-                requestData.put("filter", jsonMapper.writeValueAsString(filterQuery));
-            }
-        } else {
-            requestData.put("filter", "{}");
-        }
 
         String jsonBody = jsonMapper.writeValueAsString(requestData);
 
@@ -380,10 +397,13 @@ public class HybridIndex {
         return fusedResults;
     }
 
-    private List<Map<String,Object>> reciprocalRankFusion (Map<String, Object> data,int k) {
-        List<Map<String, Object>> denseResults = (List<Map<String, Object>>) data.getOrDefault("dense_results", new ArrayList<>());
-        List<Map<String, Object>> sparseResults = (List<Map<String, Object>>) data.getOrDefault("sparse_results", new ArrayList<>());
-        List<Map<String, Object>> metadata = (List<Map<String, Object>>) data.getOrDefault("metadata", new ArrayList<>());
+    private List<Map<String, Object>> reciprocalRankFusion(Map<String, Object> data, int k) {
+        List<Map<String, Object>> denseResults = (List<Map<String, Object>>) data.getOrDefault("dense_results",
+                new ArrayList<>());
+        List<Map<String, Object>> sparseResults = (List<Map<String, Object>>) data.getOrDefault("sparse_results",
+                new ArrayList<>());
+        List<Map<String, Object>> metadata = (List<Map<String, Object>>) data.getOrDefault("metadata",
+                new ArrayList<>());
 
         // Create dictionaries for quick lookup
         Map<String, Integer> denseRankMap = new HashMap<>();
@@ -440,7 +460,8 @@ public class HybridIndex {
                 rrfScore += 1.0 / (k + sparseRank);
             }
 
-            // Determine which vector to use (prefer dense if both present, otherwise use available)
+            // Determine which vector to use (prefer dense if both present, otherwise use
+            // available)
             Object vector = null;
             if (denseDataMap.containsKey(docId) && sparseDataMap.containsKey(docId)) {
                 // Both present, use dense vector
@@ -485,7 +506,7 @@ public class HybridIndex {
         }
 
         // Check required keys
-        String[] requiredKeys = {"dense_results", "sparse_results"};
+        String[] requiredKeys = { "dense_results", "sparse_results" };
         for (String key : requiredKeys) {
             if (!data.containsKey(key)) {
                 System.err.println("Missing required key: " + key);
@@ -510,7 +531,7 @@ public class HybridIndex {
 
             Map<?, ?> docMap = (Map<?, ?>) doc;
             // Required keys - vector is optional
-            String[] requiredDocKeys = {"id", "score", "rank"};
+            String[] requiredDocKeys = { "id", "score", "rank" };
             for (String key : requiredDocKeys) {
                 if (!docMap.containsKey(key)) {
                     System.err.println("dense_results[" + i + "] missing required key: " + key);
@@ -536,7 +557,7 @@ public class HybridIndex {
 
             Map<?, ?> docMap = (Map<?, ?>) doc;
             // Required keys - vector is optional
-            String[] requiredDocKeys = {"id", "score", "rank"};
+            String[] requiredDocKeys = { "id", "score", "rank" };
             for (String key : requiredDocKeys) {
                 if (!docMap.containsKey(key)) {
                     System.err.println("sparse_results[" + i + "] missing required key: " + key);
@@ -572,7 +593,7 @@ public class HybridIndex {
         return true;
     }
 
-    private Map<String, Object> processSearchResults(JsonNode results, boolean includeVectors) {
+    private Map<String, Object> processSearchResults(JsonNode results, boolean includeVectors) throws Exception {
         Map<String, Object> processed = new HashMap<>();
 
         // Process dense results
@@ -620,24 +641,25 @@ public class HybridIndex {
         // Process metadata
         JsonNode metadataNode = results.get("metadata");
         List<Map<String, Object>> metadata = new ArrayList<>();
-        if (metadataNode != null && metadataNode.isArray()) {
-            for (JsonNode meta : metadataNode) {
-                Map<String, Object> metaResult = new HashMap<>();
-                metaResult.put("id", meta.get("id").asText());
-                metaResult.put("meta", new HashMap<>());
 
-                // Handle metadata (ignoring decryption - simplified)
-                if (meta.has("meta") && !meta.get("meta").isNull()) {
+        if (metadataNode != null && metadataNode.isArray()) {
+            for (JsonNode metaItem : metadataNode) {
+                Map<String, Object> metaResult = new HashMap<>();
+                metaResult.put("id", metaItem.get("id").asText());
+
+                // Decode the individual meta field
+                if (metaItem.has("meta") && !metaItem.get("meta").isNull()) {
+                    String encodedMeta = metaItem.get("meta").asText();
                     try {
-                        String metaStr = meta.get("meta").asText();
-                        // In simplified version, assume it's already decoded JSON
-                        Map<String, Object> metaMap = jsonMapper.readValue(metaStr,
-                                jsonMapper.getTypeFactory().constructMapType(HashMap.class, String.class, Object.class));
-                        metaResult.put("meta", metaMap);
+                        Map<String, Object> decodedMeta = decodeMetaFromBase64(encodedMeta);
+                        metaResult.put("meta", decodedMeta);
                     } catch (Exception e) {
-                        System.out.println("Warning: Failed to process metadata for " + meta.get("id").asText() + ": " + e.getMessage());
+                        System.out.println("Warning: Failed to decode metadata for " + metaItem.get("id").asText()
+                                + ": " + e.getMessage());
                         metaResult.put("meta", new HashMap<>());
                     }
+                } else {
+                    metaResult.put("meta", new HashMap<>());
                 }
 
                 metadata.add(metaResult);
@@ -702,7 +724,8 @@ public class HybridIndex {
             if (sparseVectorObj instanceof List) {
                 List<?> sparseList = (List<?>) sparseVectorObj;
 
-                // Convert from [{"index": idx, "value": val}] to {"indices": [...], "values": [...]}
+                // Convert from [{"index": idx, "value": val}] to {"indices": [...], "values":
+                // [...]}
                 if (!sparseList.isEmpty() && sparseList.get(0) instanceof Map) {
                     List<Integer> indices = new ArrayList<>();
                     List<Double> values = new ArrayList<>();
@@ -721,20 +744,14 @@ public class HybridIndex {
                     result.put("sparse_vector", formattedSparse);
                 }
             }
-            // If it's already in the correct format (Map with indices/values), leave it as is
+            // If it's already in the correct format (Map with indices/values), leave it as
+            // is
         }
 
         return result;
     }
 
     public String deleteVector(String vectorId) throws Exception {
-        /**
-         * Delete a hybrid vector by ID
-         *
-         * @param vectorId The ID of the vector to delete
-         * @return Success message
-         * @throws Exception if the request fails
-         */
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url + "/hybrid/" + name + "/vector/" + vectorId))
