@@ -1,3 +1,6 @@
-com/vectorx/HybridIndexCreation.class
-com/vectorx/VectorXTest.class
-com/vectorx/InsertionTest.class
+ai/vectorx/DescribeTest.class
+ai/vectorx/VectorXTest.class
+ai/vectorx/SearchTest.class
+ai/vectorx/HybridIndexCreation.class
+ai/vectorx/DeleteIndex.class
+ai/vectorx/InsertionTest.class
