@@ -106,22 +106,22 @@ public class HybridIndex {
         }
 
         // Debug: Print the structure of the first vector
-        if (!vectorBatch.isEmpty()) {
-            System.out.println("Sample vector structure:");
-            Map<String, Object> sample = vectorBatch.get(0);
-            for (Map.Entry<String, Object> entry : sample.entrySet()) {
-                Object value = entry.getValue();
-                String valueInfo;
-                if (value instanceof List) {
-                    List<?> list = (List<?>) value;
-                    valueInfo = value.getClass().getSimpleName() + " (size=" + list.size() +
-                            ", first few: " + (list.size() > 3 ? list.subList(0, 3) + "..." : list) + ")";
-                } else {
-                    valueInfo = value.getClass().getSimpleName() + " = " + value;
-                }
-                System.out.println("  " + entry.getKey() + ": " + valueInfo);
-            }
-        }
+//        if (!vectorBatch.isEmpty()) {
+//            System.out.println("Sample vector structure:");
+//            Map<String, Object> sample = vectorBatch.get(0);
+//            for (Map.Entry<String, Object> entry : sample.entrySet()) {
+//                Object value = entry.getValue();
+//                String valueInfo;
+//                if (value instanceof List) {
+//                    List<?> list = (List<?>) value;
+//                    valueInfo = value.getClass().getSimpleName() + " (size=" + list.size() +
+//                            ", first few: " + (list.size() > 3 ? list.subList(0, 3) + "..." : list) + ")";
+//                } else {
+//                    valueInfo = value.getClass().getSimpleName() + " = " + value;
+//                }
+//                System.out.println("  " + entry.getKey() + ": " + valueInfo);
+//            }
+//        }
 
         byte[] serialized;
         String contentType;
@@ -130,7 +130,7 @@ public class HybridIndex {
             // Try MessagePack first
             serialized = msgPackMapper.writeValueAsBytes(vectorBatch);
             contentType = "application/msgpack";
-            System.out.println("Using MessagePack serialization");
+            System.out.println("Using MessagePack serialization" + serialized);
         } catch (Exception e) {
             System.err.println("MessagePack serialization failed, using JSON fallback: " + e.getMessage());
             // Fallback to JSON if MessagePack fails
@@ -650,6 +650,7 @@ public class HybridIndex {
                 // Decode the individual meta field
                 if (metaItem.has("meta") && !metaItem.get("meta").isNull()) {
                     String encodedMeta = metaItem.get("meta").asText();
+                    System.out.println("Encoded Meta: " + encodedMeta);
                     try {
                         Map<String, Object> decodedMeta = decodeMetaFromBase64(encodedMeta);
                         metaResult.put("meta", decodedMeta);
