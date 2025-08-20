@@ -15,6 +15,9 @@ import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static ai.vectorx.Utils.jsonUnzip;
+import static ai.vectorx.Utils.jsonZip;
+
 public class HybridIndex {
     private HttpClient apiClient;
     private String name;
@@ -79,7 +82,8 @@ public class HybridIndex {
 
             // Handle metadata
             Map<String, Object> meta = (Map<String, Object>) item.getOrDefault("meta", new HashMap<>());
-            String metaB64 = encodeMetaToBase64(meta);
+            byte[] metaByte = jsonZip(meta);
+            String metaB64 = Base64.getEncoder().encodeToString(metaByte);
 
             // Create hybrid vector object matching Python structure exactly
             Map<String, Object> hybridVector = new LinkedHashMap<>();
@@ -130,7 +134,7 @@ public class HybridIndex {
             // Try MessagePack first
             serialized = msgPackMapper.writeValueAsBytes(vectorBatch);
             contentType = "application/msgpack";
-            System.out.println("Using MessagePack serialization" + serialized);
+//            System.out.println("Using MessagePack serialization" + serialized);
         } catch (Exception e) {
             System.err.println("MessagePack serialization failed, using JSON fallback: " + e.getMessage());
             // Fallback to JSON if MessagePack fails
@@ -650,10 +654,11 @@ public class HybridIndex {
                 // Decode the individual meta field
                 if (metaItem.has("meta") && !metaItem.get("meta").isNull()) {
                     String encodedMeta = metaItem.get("meta").asText();
-                    System.out.println("Encoded Meta: " + encodedMeta);
+//                    System.out.println("Encoded Meta: " + encodedMeta);
                     try {
-                        Map<String, Object> decodedMeta = decodeMetaFromBase64(encodedMeta);
-                        metaResult.put("meta", decodedMeta);
+                        byte[] metaBytes = Base64.getDecoder().decode(encodedMeta);
+                        Map<String, Object> metaMap = jsonUnzip(metaBytes);
+                        metaResult.put("meta", metaMap);
                     } catch (Exception e) {
                         System.out.println("Warning: Failed to decode metadata for " + metaItem.get("id").asText()
                                 + ": " + e.getMessage());

@@ -14,6 +14,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.zip.Deflater;
 
+import static ai.vectorx.Utils.jsonZip;
+
 
 public class Index {
     private HttpClient apiClient;
@@ -76,40 +78,6 @@ public class Index {
     }
 
 
-    public byte[] jsonZip(Map<String, Object> map) throws IOException {
-        // If map is empty, return empty byte array
-        if (map == null || map.isEmpty()) {
-            return new byte[0];
-        }
-
-        if (map == null || map.isEmpty()) {
-            return new byte[0]; // same as b'' in Python
-        }
-
-        // 1. Convert map to JSON
-        String jsonString = jsonMapper.writeValueAsString(map);
-
-        // 2. Convert JSON string to UTF-8 bytes
-        byte[] input = jsonString.getBytes("UTF-8");
-
-        // 3. Compress using zlib (Deflater)
-        Deflater deflater = new Deflater();
-        deflater.setInput(input);
-        deflater.finish();
-
-        byte[] buffer = new byte[1024];
-        int compressedDataLength = deflater.deflate(buffer);
-        deflater.end();
-
-        // 4. Copy only the compressed part
-        byte[] output = new byte[compressedDataLength];
-        System.arraycopy(buffer, 0, output, 0, compressedDataLength);
-        System.out.println("Output" + output);
-
-        return output;
-    }
-
-
     public String upsert(List<Map<String, Object>> inputArray) throws Exception {
         if(inputArray.size() > 1000) {
             throw new IllegalArgumentException("Cannot insert more than 1000 vectors at a time");
@@ -139,7 +107,6 @@ public class Index {
             vectorObj.add(filter); // "
             vectorObj.add(norm);    // norm placeholder
             vectorObj.add(vectorList);
-
             vectorBatch.add(vectorObj);
         }
 

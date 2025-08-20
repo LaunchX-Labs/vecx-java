@@ -24,7 +24,7 @@ public class SearchTest {
     int topDenseK = 50;
     int topSparseK = 50;
     boolean includeVectors = false;
-    int rrfK = 2;
+    int rrfK = 60;
 
     System.out.println(index.search(denseVector4, sparseVector4, topSparseK, topDenseK, includeVectors, rrfK));
   }
