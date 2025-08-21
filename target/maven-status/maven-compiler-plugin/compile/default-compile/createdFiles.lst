@@ -1,9 +1,5 @@
+ai/vectorx/HybridIndexParams.class
 ai/vectorx/HybridIndex$1.class
 ai/vectorx/ApiClient.class
 ai/vectorx/HybridIndex$NormalizationResult.class
-ai/vectorx/IndexParams.class
-ai/vectorx/Main.class
-ai/vectorx/Index.class
-ai/vectorx/HybridIndexParams.class
-ai/vectorx/VectorX.class
 ai/vectorx/HybridIndex.class
